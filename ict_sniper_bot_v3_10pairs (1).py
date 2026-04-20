@@ -24,8 +24,6 @@ pending_sweeps   = []
 consecutive_loss = 0
 asian_ranges     = {}
 trade_history    = []
-# trade_history record:
-# {name, side, entry, sl, tp1, tp2, tp3, result, pips, rr, session, date, time}
 
 def send_msg(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -55,8 +53,21 @@ def is_kill_zone():
     h = now_ist().hour + now_ist().minute / 60
     return (13.5 <= h <= 16.5) or (18.5 <= h <= 21.5)
 
+def log_trade(trade, result, pips, rr_str):
+    n = now_ist()
+    trade_history.append({
+        "name":    trade["name"],
+        "side":    trade["side"],
+        "result":  result,
+        "pips":    pips,
+        "rr":      rr_str,
+        "session": trade.get("session", "?"),
+        "date":    n.strftime("%d/%m"),
+        "time":    n.strftime("%H:%M"),
+    })
+
 # ══════════════════════════════════════════════
-# REPORTS — Screenshot style
+# REPORTS — Combined style
 # ══════════════════════════════════════════════
 
 def build_report(title, records):
@@ -67,95 +78,72 @@ def build_report(title, records):
     total  = len(records)
     wins   = [r for r in records if "TP" in r.get("result","")]
     losses = [r for r in records if r.get("result","") == "SL"]
-    win_r  = round(len(wins) / total * 100) if total else 0
+    win_r  = round(len(wins)/total*100) if total else 0
 
-    # Session breakdown
-    lon_trades = [r for r in records if r.get("session","") == "LON"]
-    ny_trades  = [r for r in records if r.get("session","") == "NY"]
+    tp1_w = len([r for r in records if r.get("result")=="TP1"])
+    tp2_w = len([r for r in records if r.get("result")=="TP2"])
+    tp3_w = len([r for r in records if r.get("result")=="TP3"])
 
-    def session_stats(recs):
-        tot  = len(recs)
-        tp1  = len([r for r in recs if r.get("result") == "TP1"])
-        tp2  = len([r for r in recs if r.get("result") == "TP2"])
-        tp3  = len([r for r in recs if r.get("result") == "TP3"])
-        sl   = len([r for r in recs if r.get("result") == "SL"])
-        return tot, tp1, tp2, tp3, sl
+    lon = [r for r in records if r.get("session")=="LON"]
+    ny  = [r for r in records if r.get("session")=="NY"]
 
-    l_tot, l_tp1, l_tp2, l_tp3, l_sl = session_stats(lon_trades)
-    n_tot, n_tp1, n_tp2, n_tp3, n_sl = session_stats(ny_trades)
+    def ss(recs):
+        return (len(recs),
+                len([r for r in recs if r.get("result")=="TP1"]),
+                len([r for r in recs if r.get("result")=="TP2"]),
+                len([r for r in recs if r.get("result")=="TP3"]),
+                len([r for r in recs if r.get("result")=="SL"]))
 
-    # RR stats
-    tp1_rr = "1:1"
-    tp2_rr = "1:2"
-    tp3_rr = "1:3"
+    lt,lp1,lp2,lp3,ls = ss(lon)
+    nt,np1,np2,np3,ns = ss(ny)
 
-    tp1_wins  = len([r for r in records if r.get("result") == "TP1"])
-    tp2_wins  = len([r for r in records if r.get("result") == "TP2"])
-    tp3_wins  = len([r for r in records if r.get("result") == "TP3"])
-    total_pips = round(sum(r.get("pips", 0) for r in records), 1)
+    total_pips = round(sum(r.get("pips",0) for r in records), 1)
+    pip_str    = f"+{total_pips}" if total_pips >= 0 else str(total_pips)
 
-    # Last trades log
-    last_trades = records[-8:] if len(records) >= 8 else records
+    lines = [
+        f"📊 <b>{win_r}% WIN-RATE REPORT: {title}</b>",
+        f"<code>SESS | TOT | 1:1 | 1:2 | 1:3 | SL</code>",
+        f"<code>{'─'*34}</code>",
+        f"<code>LON  | {str(lt).ljust(3)} | {str(lp1).ljust(3)} | {str(lp2).ljust(3)} | {str(lp3).ljust(3)} | {ls}</code>",
+        f"<code>NY   | {str(nt).ljust(3)} | {str(np1).ljust(3)} | {str(np2).ljust(3)} | {str(np3).ljust(3)} | {ns}</code>",
+        f"<code>{'─'*34}</code>",
+        f"",
+        f"✅ Wins  : <b>{len(wins)}</b>  (TP1:{tp1_w} | TP2:{tp2_w} | TP3:{tp3_w})",
+        f"❌ Losses: <b>{len(losses)}</b>",
+        f"🎯 Win Rate : <b>{win_r}%</b>",
+        f"💰 Total Pips: <b>{pip_str}</b>",
+        f"",
+        f"📋 <b>LAST TRADES:</b>",
+        f"<code>{'─'*34}</code>",
+    ]
 
-    lines = []
-    lines.append(f"📊 <b>{win_r}% WIN-RATE REPORT</b>")
-    lines.append(f"<code>{'─'*32}</code>")
-    lines.append(f"<code>SESS | TOT | 1:1 | 1:2 | 1:3 | SL</code>")
-    lines.append(f"<code>{'─'*32}</code>")
-    lines.append(f"<code>LON  | {str(l_tot).ljust(3)} | {str(l_tp1).ljust(3)} | {str(l_tp2).ljust(3)} | {str(l_tp3).ljust(3)} | {l_sl}</code>")
-    lines.append(f"<code>NY   | {str(n_tot).ljust(3)} | {str(n_tp1).ljust(3)} | {str(n_tp2).ljust(3)} | {str(n_tp3).ljust(3)} | {n_sl}</code>")
-    lines.append(f"<code>{'─'*32}</code>")
-    lines.append(f"<code>TOT  | {str(total).ljust(3)} | {str(tp1_wins).ljust(3)} | {str(tp2_wins).ljust(3)} | {str(tp3_wins).ljust(3)} | {len(losses)}</code>")
-    lines.append(f"")
-    lines.append(f"💰 Total Pips: <b>{'+' if total_pips>=0 else ''}{total_pips}</b>")
-    lines.append(f"")
-    lines.append(f"📋 <b>LAST TRADES:</b>")
-    lines.append(f"<code>{'─'*32}</code>")
-
-    for r in last_trades:
+    for r in records[-8:]:
+        icon   = "✅" if "TP" in r.get("result","") else "❌"
         result = r.get("result","?")
-        icon   = "✅" if "TP" in result else "❌"
-        sess   = r.get("session","?")
-        name   = r.get("name","?")
-        side   = r.get("side","?")
         rr     = r.get("rr","?")
-        dt     = r.get("date","")
-        tm     = r.get("time","")
-        lines.append(f"<code>{dt} {tm} | {sess} | {name}</code> {icon}")
-        lines.append(f"<code>  {side} → {result} ({rr})</code>")
+        lines.append(
+            f"<code>{r.get('date','')} {r.get('time','')} | {r.get('session','?')} |</code> {icon}\n"
+            f"<code>  {r.get('name','?')} {r.get('side','?')} → {result} ({rr})</code>"
+        )
 
     send_msg("\n".join(lines))
 
 def send_daily_report():
     today   = now_ist().strftime("%d/%m")
-    records = [r for r in trade_history if r.get("date","") == today]
-    build_report(f"Daily — {today}", records)
+    records = [r for r in trade_history if r.get("date") == today]
+    build_report(f"Daily — {now_ist().strftime('%d-%m-%Y')}", records)
 
 def send_weekly_report():
     now_d   = now_ist()
-    dates   = {(now_d - timedelta(days=i)).strftime("%d/%m") for i in range(7)}
-    records = [r for r in trade_history if r.get("date","") in dates]
-    build_report(f"Weekly — {now_d.strftime('%d/%m/%Y')}", records)
+    dates   = {(now_d-timedelta(days=i)).strftime("%d/%m") for i in range(7)}
+    records = [r for r in trade_history if r.get("date") in dates]
+    build_report(f"Weekly — {now_d.strftime('%d-%m-%Y')}", records)
 
 def send_monthly_report():
     now_d     = now_ist()
     month_key = now_d.strftime("/%m")
     records   = [r for r in trade_history if r.get("date","").endswith(month_key)]
     build_report(f"Monthly — {now_d.strftime('%B %Y')}", records)
-
-def log_trade(trade, result, pips, rr_str):
-    n = now_ist()
-    trade_history.append({
-        "name":    trade["name"],
-        "side":    trade["side"],
-        "entry":   trade["entry"],
-        "result":  result,
-        "pips":    pips,
-        "rr":      rr_str,
-        "session": trade.get("session", "?"),
-        "date":    n.strftime("%d/%m"),
-        "time":    n.strftime("%H:%M"),
-    })
 
 # ══════════════════════════════════════════════
 # ASIAN RANGE
@@ -175,7 +163,7 @@ def update_asian_range(name, symbol):
 def is_outside_asian_range(price, name, side):
     if name not in asian_ranges: return True
     ar = asian_ranges[name]
-    return price <= ar["low"] if side == "BUY" else price >= ar["high"]
+    return price <= ar["low"] if side=="BUY" else price >= ar["high"]
 
 # ══════════════════════════════════════════════
 # HTF BIAS
@@ -246,7 +234,7 @@ def detect_sweep(df, htf_bias):
     return None
 
 # ══════════════════════════════════════════════
-# STAGE 2 — CONFIRM (with TP3)
+# STAGE 2 — CONFIRM
 # ══════════════════════════════════════════════
 
 def confirm_entry(df, sweep, name):
@@ -270,24 +258,20 @@ def confirm_entry(df, sweep, name):
     if side=="BUY":
         sl   = sweep["sweep_price"]-(atr*0.1)
         risk = abs(C[-1]-sl)
-        tp1  = C[-1]+(risk*1.0)   # 1:1
-        tp2  = C[-1]+(risk*2.0)   # 1:2
-        tp3  = C[-1]+(risk*3.0)   # 1:3
+        tp1,tp2,tp3 = C[-1]+(risk*1.0), C[-1]+(risk*2.0), C[-1]+(risk*3.0)
     else:
         sl   = sweep["sweep_price"]+(atr*0.1)
         risk = abs(C[-1]-sl)
-        tp1  = C[-1]-(risk*1.0)
-        tp2  = C[-1]-(risk*2.0)
-        tp3  = C[-1]-(risk*3.0)
+        tp1,tp2,tp3 = C[-1]-(risk*1.0), C[-1]-(risk*2.0), C[-1]-(risk*3.0)
     return {"side":side,"price":C[-1],"sl":sl,"tp1":tp1,"tp2":tp2,"tp3":tp3,
             "score":score,"fvg":fvg,"pd_zone":pd_ok,"pd_label":pd_lbl,
             "mit_found":mit,"asian_ok":asian,
             "win_tp1":min(65+score*3,85),
-            "win_tp2":min(50+score*3,75),
-            "win_tp3":min(35+score*3,62)}, {}
+            "win_tp2":min(52+score*3,75),
+            "win_tp3":min(38+score*3,62)}, {}
 
 # ══════════════════════════════════════════════
-# MONITOR — SL / TP1 / TP2 / TP3
+# MONITOR
 # ══════════════════════════════════════════════
 
 def monitor_active_trades():
@@ -296,61 +280,63 @@ def monitor_active_trades():
         try:
             curr     = yf.Ticker(trade["symbol"]).history(period="1d",interval="1m")["Close"].iloc[-1]
             name     = trade["name"]
-            d        = decimals(name)
             side     = trade["side"]
             side_tag = "🟢 BUY" if side=="BUY" else "🔴 SELL"
 
-            def send_tp(level, rr):
+            def hit_tp(level, rr, emoji, action):
                 pips = calculate_pips(trade["entry"], trade[level], name)
                 send_msg(
-                    f"{'🏆' if level=='tp3' else '🎯' if level=='tp2' else '🔔'} <b>{level.upper()} HIT!</b>\n"
+                    f"{emoji} <b>{level.upper()} HIT!</b>\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
-                    f"📌 Pair   : <b>{name}</b>\n"
-                    f"📐 Side   : {side_tag}\n"
-                    f"📊 RR     : <b>{rr}</b>\n"
-                    f"💰 Pips   : <b>+{pips}</b>\n"
-                    f"{'━━━━━━━━━━━━━━━━━━' if level=='tp3' else '⚡ SL → Entry move பண்ணு!' if level=='tp1' else '⚡ Partial close! SL → TP1'}\n"
+                    f"📌 Pair  : <b>{name}</b>\n"
+                    f"📐 Side  : {side_tag}\n"
+                    f"📊 RR    : <b>{rr}</b>\n"
+                    f"💰 Pips  : <b>+{pips}</b>\n"
+                    f"⚡ {action}\n"
                     f"━━━━━━━━━━━━━━━━━━"
                 )
                 log_trade(trade, level.upper(), pips, rr)
 
-            def send_sl():
+            def hit_sl():
                 pips = calculate_pips(trade["entry"], trade["sl"], name)
                 send_msg(
                     f"📉 <b>STOP LOSS HIT</b>\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
-                    f"📌 Pair   : <b>{name}</b>\n"
-                    f"📐 Side   : {side_tag}\n"
-                    f"📊 RR     : <b>-1R</b>\n"
-                    f"💸 Pips   : <b>-{pips}</b>\n"
+                    f"📌 Pair  : <b>{name}</b>\n"
+                    f"📐 Side  : {side_tag}\n"
+                    f"📊 RR    : <b>-1R</b>\n"
+                    f"💸 Pips  : <b>-{pips}</b>\n"
                     f"━━━━━━━━━━━━━━━━━━"
                 )
                 log_trade(trade, "SL", -pips, "-1R")
-                global consecutive_loss; consecutive_loss+=1
+                global consecutive_loss
+                consecutive_loss += 1
                 active_trades.remove(trade)
-                if consecutive_loss>=2:
+                if consecutive_loss >= 2:
                     send_msg("⛔ <b>2 Consecutive Losses!</b>\n🧘 Bot paused. Re-assess HTF.")
 
             if side=="BUY":
-                if curr>=trade["tp3"] and not trade.get("tp3_hit"):
-                    send_tp("tp3","1:3"); trade["tp3_hit"]=True
-                    consecutive_loss=0; active_trades.remove(trade)
+                if   curr>=trade["tp3"] and not trade.get("tp3_hit"):
+                    hit_tp("tp3","1:3","🏆","Trade Closed! Full target!")
+                    trade["tp3_hit"]=True; consecutive_loss=0; active_trades.remove(trade)
                 elif curr>=trade["tp2"] and not trade.get("tp2_hit"):
-                    send_tp("tp2","1:2"); trade["tp2_hit"]=True
+                    hit_tp("tp2","1:2","🎯","Partial close! SL → TP1 move பண்ணு!")
+                    trade["tp2_hit"]=True
                 elif curr>=trade["tp1"] and not trade.get("tp1_hit"):
-                    send_tp("tp1","1:1"); trade["tp1_hit"]=True
-                elif curr<=trade["sl"]:
-                    send_sl()
+                    hit_tp("tp1","1:1","🔔","SL → Entry-க்கு move பண்ணு!")
+                    trade["tp1_hit"]=True
+                elif curr<=trade["sl"]: hit_sl()
             else:
-                if curr<=trade["tp3"] and not trade.get("tp3_hit"):
-                    send_tp("tp3","1:3"); trade["tp3_hit"]=True
-                    consecutive_loss=0; active_trades.remove(trade)
+                if   curr<=trade["tp3"] and not trade.get("tp3_hit"):
+                    hit_tp("tp3","1:3","🏆","Trade Closed! Full target!")
+                    trade["tp3_hit"]=True; consecutive_loss=0; active_trades.remove(trade)
                 elif curr<=trade["tp2"] and not trade.get("tp2_hit"):
-                    send_tp("tp2","1:2"); trade["tp2_hit"]=True
+                    hit_tp("tp2","1:2","🎯","Partial close! SL → TP1 move பண்ணு!")
+                    trade["tp2_hit"]=True
                 elif curr<=trade["tp1"] and not trade.get("tp1_hit"):
-                    send_tp("tp1","1:1"); trade["tp1_hit"]=True
-                elif curr>=trade["sl"]:
-                    send_sl()
+                    hit_tp("tp1","1:1","🔔","SL → Entry-க்கு move பண்ணு!")
+                    trade["tp1_hit"]=True
+                elif curr>=trade["sl"]: hit_sl()
         except: continue
 
 # ══════════════════════════════════════════════
@@ -363,7 +349,6 @@ def analyze_all():
     monitor_active_trades()
     session = get_session()
 
-    # STAGE 2
     for ps in pending_sweeps[:]:
         name,symbol,sweep = ps["name"],ps["symbol"],ps["sweep"]
         if any(t["name"]==name for t in active_trades):
@@ -386,14 +371,14 @@ def analyze_all():
                 p_tp2    = calculate_pips(entry["price"],entry["tp2"],name)
                 p_tp3    = calculate_pips(entry["price"],entry["tp3"],name)
 
-                # Alert 1 — Big asset name
+                # MSG 1 — Asset name big & clear
                 send_msg(
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"🎯 <b>{name}</b>  {side_tag}\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"⚡ <b>{act_tag}!</b>"
                 )
-                # Alert 2 — Full detail with TP3
+                # MSG 2 — Full details
                 send_msg(
                     f"✅ <b>CONFIRMED SIGNAL</b>\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
@@ -406,9 +391,9 @@ def analyze_all():
                     f"💰 Entry   : <b>{round(entry['price'],d)}</b>\n"
                     f"🛑 SL      : <b>{round(entry['sl'],d)}</b>  (-{p_sl}p)\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
-                    f"🎯 TP1 (1:1): <b>{round(entry['tp1'],d)}</b>  +{p_tp1}p  [{entry['win_tp1']}%]\n"
-                    f"🎯 TP2 (1:2): <b>{round(entry['tp2'],d)}</b>  +{p_tp2}p  [{entry['win_tp2']}%]\n"
-                    f"🏆 TP3 (1:3): <b>{round(entry['tp3'],d)}</b>  +{p_tp3}p  [{entry['win_tp3']}%]\n"
+                    f"🎯 TP1(1:1): <b>{round(entry['tp1'],d)}</b>  +{p_tp1}p  [{entry['win_tp1']}%]\n"
+                    f"🎯 TP2(1:2): <b>{round(entry['tp2'],d)}</b>  +{p_tp2}p  [{entry['win_tp2']}%]\n"
+                    f"🏆 TP3(1:3): <b>{round(entry['tp3'],d)}</b>  +{p_tp3}p  [{entry['win_tp3']}%]\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"{'✅' if entry['fvg'] else '⚠️'}FVG "
                     f"{'✅' if entry['pd_zone'] else '⚠️'}PD "
@@ -435,7 +420,6 @@ def analyze_all():
         except: pending_sweeps.remove(ps)
         time.sleep(3)
 
-    # STAGE 1
     for name,symbol in PAIRS.items():
         if any(t["name"]==name for t in active_trades): continue
         if any(p["name"]==name for p in pending_sweeps): continue
@@ -469,7 +453,6 @@ def analyze_all():
         time.sleep(4)
 
 def main():
-    # Reports schedule
     schedule.every().day.at("21:00").do(send_daily_report)
     schedule.every().friday.at("21:00").do(send_weekly_report)
     schedule.every().day.at("21:01").do(
@@ -483,8 +466,7 @@ def main():
         "✅ Sweep Alert (Pair + BUY/SELL)\n"
         "✅ TP1(1:1) | TP2(1:2) | TP3(1:3)\n"
         "✅ Live SL/TP Monitor\n"
-        "✅ Daily Report 9pm | Weekly Fri | Monthly 1st\n"
-        "✅ Session breakdown (LON/NY)\n\n"
+        "✅ Daily 9pm | Weekly Fri | Monthly 1st\n\n"
         "🎯 Win Rate: 68-75% | 24/7 Running!"
     )
     analyze_all()
